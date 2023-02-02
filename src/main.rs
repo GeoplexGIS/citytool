@@ -13,10 +13,10 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use indexmap::IndexSet;
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde::ser::SerializeMap;
 
-#[derive(Serialize, Debug, Eq, Hash, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, Hash, PartialEq, Clone)]
 struct Vertex([Decimal; 3]);
 // #[serde(with = "rust_decimal::serde::float")]
 //     coords: [Decimalk; 3]
@@ -34,7 +34,7 @@ struct Vertex([Decimal; 3]);
 //     }
 // }
 
-#[derive(Serialize, Debug, Eq, Hash, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, Hash, PartialEq, Clone)]
 struct TriangleIndices([usize; 3]);
 impl TriangleIndices {
     pub(crate) fn from_vec(iter: Vec<usize>) -> TriangleIndices {
@@ -43,7 +43,7 @@ impl TriangleIndices {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 enum CityObjectType {
     Building,
     BuildingInstallation,
@@ -51,12 +51,13 @@ enum CityObjectType {
     TINRelief
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 enum CityObjectGeometryType {
     CompositeSurface,
     MultiSurface
 }
 
+#[derive(Clone, Copy)]
 enum CityObjectGeometryLOD {
     One,
     Two,
@@ -75,17 +76,31 @@ impl Serialize for CityObjectGeometryLOD {
     }
 }
 
-#[derive(Serialize)]
+impl<'de> Deserialize<'de> for CityObjectGeometryLOD {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "1" => Ok(CityObjectGeometryLOD::One),
+            "2" => Ok(CityObjectGeometryLOD::Two),
+            "3" => Ok(CityObjectGeometryLOD::Three),
+            _ => Err(serde::de::Error::custom("Invalid CityObjectGeometryLOD"))
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct Boundary(Vec<TriangleIndices>);
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct CityObjectGeometry {
     r#type: CityObjectGeometryType,
     lod: CityObjectGeometryLOD,
     boundaries: Vec<Boundary>
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct CityObject {
     r#type: CityObjectType,
     geometry: Vec<CityObjectGeometry>
@@ -100,13 +115,15 @@ impl CityObject {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct CityModelTransform {
     scale: [Decimal; 3],
     translate: [Decimal; 3],
 }
 
+#[derive(Deserialize)]
 struct CityModel {
+    #[serde(rename = "CityObjects")]
     objects: HashMap<String, CityObject>,
     transform: CityModelTransform,
     vertices: IndexSet<Vertex>
@@ -234,8 +251,13 @@ fn main() {
     output.write_all(s.as_bytes()).unwrap();
     info!("Wrote CityJSON to {}", output_path);
 
+    // Load the CityJSON again using serde_json
+    info!("Loading CityJSON again");
+    let s2 = std::fs::read_to_string(&output_path).unwrap();
+    let model2: CityModel = serde_json::from_str(&s2).unwrap();
+    info!("Loaded CityModel with {} objects and {} vertices", model2.objects.len(), model2.vertices.len());
 
-    // let s1 = std::fs::read_to_string("data.json")
+               // let s1 = std::fs::read_to_string("data.json")
     //         .expect("Couldn't read CityJSON file");
     // let v = cjval::CJValidator::from_str(&s1);
     // if v.is_valid() {
